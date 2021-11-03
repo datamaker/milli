@@ -77,14 +77,12 @@ pub struct IndexDocuments<'t, 'u, 'i, 'a> {
     words_positions_min_level_size: Option<NonZeroU32>,
     update_method: IndexDocumentsMethod,
     autogenerate_docids: bool,
-    update_id: u64,
 }
 
 impl<'t, 'u, 'i, 'a> IndexDocuments<'t, 'u, 'i, 'a> {
     pub fn new(
         wtxn: &'t mut heed::RwTxn<'i, 'u>,
         index: &'i Index,
-        update_id: u64,
     ) -> IndexDocuments<'t, 'u, 'i, 'a> {
         IndexDocuments {
             wtxn,
@@ -104,7 +102,6 @@ impl<'t, 'u, 'i, 'a> IndexDocuments<'t, 'u, 'i, 'a> {
             words_positions_min_level_size: None,
             update_method: IndexDocumentsMethod::ReplaceDocuments,
             autogenerate_docids: false,
-            update_id,
             max_positions_per_attributes: None,
         }
     }
@@ -133,7 +130,7 @@ impl<'t, 'u, 'i, 'a> IndexDocuments<'t, 'u, 'i, 'a> {
     ) -> Result<DocumentAdditionResult>
     where
         R: Read + Seek,
-        F: Fn(UpdateIndexingStep, u64) + Sync,
+        F: Fn(UpdateIndexingStep) + Sync,
     {
         // Early return when there is no document to add
         if reader.is_empty() {
@@ -142,8 +139,6 @@ impl<'t, 'u, 'i, 'a> IndexDocuments<'t, 'u, 'i, 'a> {
 
         self.index.set_updated_at(self.wtxn, &Utc::now())?;
         let before_transform = Instant::now();
-        let update_id = self.update_id;
-        let progress_callback = |step| progress_callback(step, update_id);
         let transform = Transform {
             rtxn: &self.wtxn,
             index: self.index,
@@ -156,7 +151,7 @@ impl<'t, 'u, 'i, 'a> IndexDocuments<'t, 'u, 'i, 'a> {
             autogenerate_docids: self.autogenerate_docids,
         };
 
-        let output = transform.read_documents(reader, progress_callback)?;
+        let output = transform.read_documents(reader, &progress_callback)?;
         let nb_documents = output.documents_count;
 
         info!("Update transformed in {:.02?}", before_transform.elapsed());
@@ -288,7 +283,6 @@ impl<'t, 'u, 'i, 'a> IndexDocuments<'t, 'u, 'i, 'a> {
                 chunk_compression_level: self.chunk_compression_level,
                 thread_pool: self.thread_pool,
                 max_positions_per_attributes: self.max_positions_per_attributes,
-                update_id: self.update_id,
             };
             let mut deletion_builder = update_builder.delete_documents(self.wtxn, self.index)?;
             debug!("documents to delete {:?}", replaced_documents_ids);
@@ -355,7 +349,7 @@ impl<'t, 'u, 'i, 'a> IndexDocuments<'t, 'u, 'i, 'a> {
         let mut databases_seen = MERGED_DATABASE_COUNT;
 
         // Run the facets update operation.
-        let mut builder = Facets::new(self.wtxn, self.index, self.update_id);
+        let mut builder = Facets::new(self.wtxn, self.index);
         builder.chunk_compression_type = self.chunk_compression_type;
         builder.chunk_compression_level = self.chunk_compression_level;
         if let Some(value) = self.facet_level_group_size {
@@ -373,7 +367,7 @@ impl<'t, 'u, 'i, 'a> IndexDocuments<'t, 'u, 'i, 'a> {
         });
 
         // Run the words prefixes update operation.
-        let mut builder = WordsPrefixesFst::new(self.wtxn, self.index, self.update_id);
+        let mut builder = WordsPrefixesFst::new(self.wtxn, self.index);
         if let Some(value) = self.words_prefix_threshold {
             builder.threshold(value);
         }
@@ -466,8 +460,8 @@ mod tests {
             { "id": 2, "name": "kevina" },
             { "id": 3, "name": "benoit" }
         ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 3 documents now.
@@ -479,8 +473,8 @@ mod tests {
         // Second we send 1 document with id 1, to erase the previous ones.
         let mut wtxn = index.write_txn().unwrap();
         let content = documents!([ { "id": 1, "name": "updated kevin" } ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 1);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is **always** 3 documents.
@@ -496,8 +490,8 @@ mod tests {
             { "id": 2, "name": "updated kevina" },
             { "id": 3, "name": "updated benoit" }
         ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 2);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is **always** 3 documents.
@@ -522,9 +516,9 @@ mod tests {
             { "id": 1, "name": "kevina" },
             { "id": 1, "name": "benoit" }
         ]);
-        let mut builder = IndexDocuments::new(&mut wtxn, &index, 0);
+        let mut builder = IndexDocuments::new(&mut wtxn, &index);
         builder.index_documents_method(IndexDocumentsMethod::UpdateDocuments);
-        builder.execute(content, |_, _| ()).unwrap();
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is only 1 document now.
@@ -548,9 +542,9 @@ mod tests {
         // Second we send 1 document with id 1, to force it to be merged with the previous one.
         let mut wtxn = index.write_txn().unwrap();
         let content = documents!([ { "id": 1, "age": 25 } ]);
-        let mut builder = IndexDocuments::new(&mut wtxn, &index, 1);
+        let mut builder = IndexDocuments::new(&mut wtxn, &index);
         builder.index_documents_method(IndexDocumentsMethod::UpdateDocuments);
-        builder.execute(content, |_, _| ()).unwrap();
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is **always** 1 document.
@@ -587,8 +581,8 @@ mod tests {
             { "name": "kevina" },
             { "name": "benoit" }
         ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        assert!(builder.execute(content, |_, _| ()).is_err());
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        assert!(builder.execute(content, |_| ()).is_err());
         wtxn.commit().unwrap();
 
         // Check that there is no document.
@@ -612,9 +606,9 @@ mod tests {
             { "name": "kevina" },
             { "name": "benoit" }
         ]);
-        let mut builder = IndexDocuments::new(&mut wtxn, &index, 0);
+        let mut builder = IndexDocuments::new(&mut wtxn, &index);
         builder.enable_autogenerate_docids();
-        builder.execute(content, |_, _| ()).unwrap();
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 3 documents now.
@@ -630,8 +624,8 @@ mod tests {
         // Second we send 1 document with the generated uuid, to erase the previous ones.
         let mut wtxn = index.write_txn().unwrap();
         let content = documents!([ { "name": "updated kevin", "id": kevin_uuid } ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 1);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is **always** 3 documents.
@@ -667,8 +661,8 @@ mod tests {
             { "id": 2, "name": "kevina" },
             { "id": 3, "name": "benoit" }
         ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 3 documents now.
@@ -680,9 +674,9 @@ mod tests {
         // Second we send 1 document without specifying the id.
         let mut wtxn = index.write_txn().unwrap();
         let content = documents!([ { "name": "new kevin" } ]);
-        let mut builder = IndexDocuments::new(&mut wtxn, &index, 1);
+        let mut builder = IndexDocuments::new(&mut wtxn, &index);
         builder.enable_autogenerate_docids();
-        builder.execute(content, |_, _| ()).unwrap();
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 4 documents now.
@@ -702,8 +696,8 @@ mod tests {
         // First we send 0 documents and only headers.
         let mut wtxn = index.write_txn().unwrap();
         let content = documents!([]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is no documents.
@@ -724,16 +718,16 @@ mod tests {
         let mut wtxn = index.write_txn().unwrap();
         // There is a space in the document id.
         let content = documents!([ { "id": "brume bleue", "name": "kevin" } ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        assert!(builder.execute(content, |_, _| ()).is_err());
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        assert!(builder.execute(content, |_| ()).is_err());
         wtxn.commit().unwrap();
 
         // First we send 1 document with a valid id.
         let mut wtxn = index.write_txn().unwrap();
         // There is a space in the document id.
         let content = documents!([ { "id": 32, "name": "kevin" } ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 1);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 1 document now.
@@ -757,8 +751,8 @@ mod tests {
             { "id": 1, "name": "kevina", "array": ["I", "am", "fine"] },
             { "id": 2, "name": "benoit", "array_of_object": [{ "wow": "amazing" }] }
         ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 1 documents now.
@@ -796,13 +790,13 @@ mod tests {
           { "id": 4,    "title": "Harry Potter and the Half-Blood Prince", "author": "J. K. Rowling",            "genre": "fantasy" },
           { "id": 42,   "title": "The Hitchhiker's Guide to the Galaxy",   "author": "Douglas Adams", "_geo": { "lat": 35, "lng": 23 } }
         ]);
-        let mut builder = IndexDocuments::new(&mut wtxn, &index, 0);
+        let mut builder = IndexDocuments::new(&mut wtxn, &index);
         builder.index_documents_method(IndexDocumentsMethod::ReplaceDocuments);
-        builder.execute(documents, |_, _| ()).unwrap();
+        builder.execute(documents, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         let mut wtxn = index.write_txn().unwrap();
-        let mut builder = IndexDocuments::new(&mut wtxn, &index, 1);
+        let mut builder = IndexDocuments::new(&mut wtxn, &index);
         builder.index_documents_method(IndexDocumentsMethod::UpdateDocuments);
         let documents = documents!([
           {
@@ -812,7 +806,7 @@ mod tests {
           }
         ]);
 
-        builder.execute(documents, |_, _| ()).unwrap();
+        builder.execute(documents, |_| ()).unwrap();
         wtxn.commit().unwrap();
     }
 
@@ -830,12 +824,12 @@ mod tests {
             { "objectId": 1,   "title": "Alice In Wonderland", "comment": "A weird book" },
             { "objectId": 30,  "title": "Hamlet", "_geo": { "lat": 12, "lng": 89 } }
         ]);
-        IndexDocuments::new(&mut wtxn, &index, 0).execute(content, |_, _| ()).unwrap();
+        IndexDocuments::new(&mut wtxn, &index).execute(content, |_| ()).unwrap();
 
         assert_eq!(index.primary_key(&wtxn).unwrap(), Some("objectId"));
 
         // Delete not all of the documents but some of them.
-        let mut builder = DeleteDocuments::new(&mut wtxn, &index, 1).unwrap();
+        let mut builder = DeleteDocuments::new(&mut wtxn, &index).unwrap();
         builder.delete_external_id("30");
         builder.execute().unwrap();
 
@@ -845,7 +839,7 @@ mod tests {
         let content = documents!([
             { "objectId": 30,  "title": "Hamlet", "_geo": { "lat": 12, "lng": 89 } }
         ]);
-        IndexDocuments::new(&mut wtxn, &index, 0).execute(content, |_, _| ()).unwrap();
+        IndexDocuments::new(&mut wtxn, &index).execute(content, |_| ()).unwrap();
 
         let external_documents_ids = index.external_documents_ids(&wtxn).unwrap();
         assert!(external_documents_ids.get("30").is_some());
@@ -853,7 +847,7 @@ mod tests {
         let content = documents!([
             { "objectId": 30,  "title": "Hamlet", "_geo": { "lat": 12, "lng": 89 } }
         ]);
-        IndexDocuments::new(&mut wtxn, &index, 0).execute(content, |_, _| ()).unwrap();
+        IndexDocuments::new(&mut wtxn, &index).execute(content, |_| ()).unwrap();
 
         wtxn.commit().unwrap();
     }
@@ -883,8 +877,8 @@ mod tests {
         cursor.set_position(0);
         let content = DocumentBatchReader::from_reader(cursor).unwrap();
 
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
 
         wtxn.commit().unwrap();
     }
@@ -913,8 +907,8 @@ mod tests {
         cursor.set_position(0);
         let content = DocumentBatchReader::from_reader(cursor).unwrap();
 
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
 
         wtxn.commit().unwrap();
 
@@ -966,8 +960,8 @@ mod tests {
             },
         ]);
 
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
 
         wtxn.commit().unwrap();
     }
@@ -987,8 +981,8 @@ mod tests {
         ]);
 
         let mut wtxn = index.write_txn().unwrap();
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 4 document now.
@@ -999,8 +993,8 @@ mod tests {
         let content = documents!([]);
 
         let mut wtxn = index.write_txn().unwrap();
-        let builder = IndexDocuments::new(&mut wtxn, &index, 1);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 4 document now.
@@ -1016,8 +1010,8 @@ mod tests {
         ]);
 
         let mut wtxn = index.write_txn().unwrap();
-        let builder = IndexDocuments::new(&mut wtxn, &index, 2);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Check that there is 4 document now.
@@ -1039,8 +1033,8 @@ mod tests {
         ]);
 
         let mut wtxn = index.write_txn().unwrap();
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
         wtxn.commit().unwrap();
 
         let rtxn = index.read_txn().unwrap();

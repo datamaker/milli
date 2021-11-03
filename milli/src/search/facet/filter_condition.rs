@@ -647,9 +647,9 @@ mod tests {
         let mut map = index.fields_ids_map(&wtxn).unwrap();
         map.insert("channel");
         index.put_fields_ids_map(&mut wtxn, &map).unwrap();
-        let mut builder = Settings::new(&mut wtxn, &index, 0);
+        let mut builder = Settings::new(&mut wtxn, &index);
         builder.set_filterable_fields(hashset! { S("channel") });
-        builder.execute(|_, _| ()).unwrap();
+        builder.execute(|_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Test that the facet condition is correctly generated.
@@ -679,9 +679,9 @@ mod tests {
         let mut map = index.fields_ids_map(&wtxn).unwrap();
         map.insert("timestamp");
         index.put_fields_ids_map(&mut wtxn, &map).unwrap();
-        let mut builder = Settings::new(&mut wtxn, &index, 0);
+        let mut builder = Settings::new(&mut wtxn, &index);
         builder.set_filterable_fields(hashset! { "timestamp".into() });
-        builder.execute(|_, _| ()).unwrap();
+        builder.execute(|_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Test that the facet condition is correctly generated.
@@ -705,10 +705,10 @@ mod tests {
 
         // Set the filterable fields to be the channel.
         let mut wtxn = index.write_txn().unwrap();
-        let mut builder = Settings::new(&mut wtxn, &index, 0);
+        let mut builder = Settings::new(&mut wtxn, &index);
         builder.set_searchable_fields(vec![S("channel"), S("timestamp")]); // to keep the fields order
         builder.set_filterable_fields(hashset! { S("channel"), S("timestamp") });
-        builder.execute(|_, _| ()).unwrap();
+        builder.execute(|_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Test that the facet condition is correctly generated.
@@ -773,15 +773,15 @@ mod tests {
 
         // Set the filterable fields to be the channel.
         let mut wtxn = index.write_txn().unwrap();
-        let mut builder = Settings::new(&mut wtxn, &index, 0);
+        let mut builder = Settings::new(&mut wtxn, &index);
         builder.set_searchable_fields(vec![S("_geo"), S("price")]); // to keep the fields order
-        builder.execute(|_, _| ()).unwrap();
+        builder.execute(|_| ()).unwrap();
         wtxn.commit().unwrap();
 
         let mut wtxn = index.write_txn().unwrap();
-        let mut builder = Settings::new(&mut wtxn, &index, 0);
+        let mut builder = Settings::new(&mut wtxn, &index);
         builder.set_filterable_fields(hashset! { S("_geo"), S("price") });
-        builder.execute(|_, _| ()).unwrap();
+        builder.execute(|_| ()).unwrap();
         wtxn.commit().unwrap();
 
         let rtxn = index.read_txn().unwrap();
@@ -900,10 +900,10 @@ mod tests {
 
         // Set the filterable fields to be the channel.
         let mut wtxn = index.write_txn().unwrap();
-        let mut builder = Settings::new(&mut wtxn, &index, 0);
+        let mut builder = Settings::new(&mut wtxn, &index);
         builder.set_searchable_fields(vec![S("channel"), S("timestamp")]); // to keep the fields order
         builder.set_filterable_fields(hashset! { S("channel"), S("timestamp") });
-        builder.execute(|_, _| ()).unwrap();
+        builder.execute(|_| ()).unwrap();
         wtxn.commit().unwrap();
 
         // Test that the facet condition is correctly generated.

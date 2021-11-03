@@ -22,14 +22,12 @@ pub struct DeleteDocuments<'t, 'u, 'i> {
     index: &'i Index,
     external_documents_ids: ExternalDocumentsIds<'static>,
     documents_ids: RoaringBitmap,
-    update_id: u64,
 }
 
 impl<'t, 'u, 'i> DeleteDocuments<'t, 'u, 'i> {
     pub fn new(
         wtxn: &'t mut heed::RwTxn<'i, 'u>,
         index: &'i Index,
-        update_id: u64,
     ) -> Result<DeleteDocuments<'t, 'u, 'i>> {
         let external_documents_ids = index.external_documents_ids(wtxn)?.into_static();
 
@@ -38,7 +36,6 @@ impl<'t, 'u, 'i> DeleteDocuments<'t, 'u, 'i> {
             index,
             external_documents_ids,
             documents_ids: RoaringBitmap::new(),
-            update_id,
         })
     }
 
@@ -75,7 +72,7 @@ impl<'t, 'u, 'i> DeleteDocuments<'t, 'u, 'i> {
         // We can execute a ClearDocuments operation when the number of documents
         // to delete is exactly the number of documents in the database.
         if current_documents_ids_len == self.documents_ids.len() {
-            return ClearDocuments::new(self.wtxn, self.index, self.update_id).execute();
+            return ClearDocuments::new(self.wtxn, self.index).execute();
         }
 
         let fields_ids_map = self.index.fields_ids_map(self.wtxn)?;
@@ -582,11 +579,11 @@ mod tests {
             { "id": 1, "name": "kevina", "array": ["I", "am", "fine"] },
             { "id": 2, "name": "benoit", "array_of_object": [{ "wow": "amazing" }] }
         ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
 
         // delete those documents, ids are synchronous therefore 0, 1, and 2.
-        let mut builder = DeleteDocuments::new(&mut wtxn, &index, 1).unwrap();
+        let mut builder = DeleteDocuments::new(&mut wtxn, &index).unwrap();
         builder.delete_document(0);
         builder.delete_document(1);
         builder.delete_document(2);
@@ -612,11 +609,11 @@ mod tests {
             { "mysuperid": 1, "name": "kevina" },
             { "mysuperid": 2, "name": "benoit" }
         ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
 
         // Delete not all of the documents but some of them.
-        let mut builder = DeleteDocuments::new(&mut wtxn, &index, 1).unwrap();
+        let mut builder = DeleteDocuments::new(&mut wtxn, &index).unwrap();
         builder.delete_external_id("0");
         builder.delete_external_id("1");
         builder.execute().unwrap();
@@ -632,10 +629,10 @@ mod tests {
         let index = Index::new(options, &path).unwrap();
 
         let mut wtxn = index.write_txn().unwrap();
-        let mut builder = Settings::new(&mut wtxn, &index, 0);
+        let mut builder = Settings::new(&mut wtxn, &index);
         builder.set_primary_key(S("docid"));
         builder.set_filterable_fields(hashset! { S("label") });
-        builder.execute(|_, _| ()).unwrap();
+        builder.execute(|_| ()).unwrap();
 
         let content = documents!([
             {"docid":"1_4","label":"sign"},
@@ -659,11 +656,11 @@ mod tests {
             {"docid":"1_68","label":"design"},
             {"docid":"1_69","label":"geometry"}
         ]);
-        let builder = IndexDocuments::new(&mut wtxn, &index, 0);
-        builder.execute(content, |_, _| ()).unwrap();
+        let builder = IndexDocuments::new(&mut wtxn, &index);
+        builder.execute(content, |_| ()).unwrap();
 
         // Delete not all of the documents but some of them.
-        let mut builder = DeleteDocuments::new(&mut wtxn, &index, 1).unwrap();
+        let mut builder = DeleteDocuments::new(&mut wtxn, &index).unwrap();
         builder.delete_external_id("1_4");
         builder.execute().unwrap();
 
@@ -682,11 +679,11 @@ mod tests {
         let index = Index::new(options, &path).unwrap();
 
         let mut wtxn = index.write_txn().unwrap();
-        let mut builder = Settings::new(&mut wtxn, &index, 0);
+        let mut builder = Settings::new(&mut wtxn, &index);
         builder.set_primary_key(S("id"));
         builder.set_filterable_fields(hashset!(S("_geo")));
         builder.set_sortable_fields(hashset!(S("_geo")));
-        builder.execute(|_, _| ()).unwrap();
+        builder.execute(|_| ()).unwrap();
 
         let content = documents!([
             {"id":"1","city":"Lille",             "_geo": { "lat": 50.629973371633746, "lng": 3.0569447399419570 } },
@@ -712,7 +709,7 @@ mod tests {
         ]);
         let external_ids_to_delete = ["5", "6", "7", "12", "17", "19"];
 
-        IndexDocuments::new(&mut wtxn, &index, 0).execute(content, |_, _| ()).unwrap();
+        IndexDocuments::new(&mut wtxn, &index).execute(content, |_| ()).unwrap();
 
         let external_document_ids = index.external_documents_ids(&wtxn).unwrap();
         let ids_to_delete: Vec<u32> = external_ids_to_delete
@@ -721,7 +718,7 @@ mod tests {
             .collect();
 
         // Delete some documents.
-        let mut builder = DeleteDocuments::new(&mut wtxn, &index, 1).unwrap();
+        let mut builder = DeleteDocuments::new(&mut wtxn, &index).unwrap();
         external_ids_to_delete.iter().for_each(|id| drop(builder.delete_external_id(id)));
         builder.execute().unwrap();
 
